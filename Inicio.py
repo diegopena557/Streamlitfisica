@@ -1,7 +1,6 @@
 import pandas as pd
 import streamlit as st
 import numpy as np
-from datetime import datetime
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA
@@ -18,27 +17,27 @@ st.set_page_config(
 # ============================================================
 
 st.markdown("""
-    <style>
+<style>
 
-    .main {
-        padding: 2rem;
-    }
+.main {
+    padding: 2rem;
+}
 
-    .stMetric {
-        background-color: #f7f7f7;
-        padding: 15px;
-        border-radius: 10px;
-    }
+.stMetric {
+    background-color: #f7f7f7;
+    padding: 15px;
+    border-radius: 10px;
+}
 
-    h1 {
-        color: #F39C12;
-    }
+h1 {
+    color: #F39C12;
+}
 
-    h2, h3 {
-        color: #2C3E50;
-    }
+h2, h3 {
+    color: #2C3E50;
+}
 
-    </style>
+</style>
 """, unsafe_allow_html=True)
 
 # ============================================================
@@ -49,7 +48,7 @@ st.title("☀️ Monitoreo Inteligente de Luminosidad Solar")
 
 st.markdown("""
 Esta aplicación permite analizar datos de luminosidad capturados
-por un sensor LDR conectado a un ESP32.
+por un sensor LDR conectado a un ESP32 y almacenados en InfluxDB.
 
 ### Variables monitoreadas:
 - 🌞 Luminosidad (%)
@@ -72,11 +71,11 @@ st.subheader("📍 Ubicación del Sensor")
 st.map(eafit_location, zoom=15)
 
 # ============================================================
-# CARGA DE ARCHIVO
+# SUBIR ARCHIVO
 # ============================================================
 
 uploaded_file = st.file_uploader(
-    'Seleccione archivo CSV',
+    "Seleccione archivo CSV exportado desde InfluxDB",
     type=['csv']
 )
 
@@ -89,30 +88,66 @@ if uploaded_file is not None:
     try:
 
         # ====================================================
-        # CARGAR CSV
+        # LEER CSV DE INFLUXDB
         # ====================================================
 
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(
+            uploaded_file,
+            skiprows=2
+        )
 
         # ====================================================
         # LIMPIAR COLUMNAS
         # ====================================================
 
-        df.columns = [c.strip() for c in df.columns]
+        df.columns = [str(c).strip() for c in df.columns]
 
         # ====================================================
-        # CONVERTIR TIME
+        # ELIMINAR COLUMNAS VACÍAS
+        # ====================================================
+
+        df = df.dropna(axis=1, how='all')
+
+        # ====================================================
+        # RENOMBRAR COLUMNA TIME
+        # ====================================================
+
+        if '_time' in df.columns:
+            df = df.rename(columns={'_time': 'Time'})
+
+        elif 'time' in df.columns:
+            df = df.rename(columns={'time': 'Time'})
+
+        # ====================================================
+        # ELIMINAR COLUMNAS METADATA
+        # ====================================================
+
+        columnas_eliminar = [
+            'result',
+            'table',
+            '_start',
+            '_stop',
+            '_measurement'
+        ]
+
+        for col in columnas_eliminar:
+
+            if col in df.columns:
+                df = df.drop(columns=col)
+
+        # ====================================================
+        # CONVERTIR TIEMPO
         # ====================================================
 
         if 'Time' in df.columns:
+
             df['Time'] = pd.to_datetime(df['Time'])
+
             df = df.set_index('Time')
 
         # ====================================================
-        # DETECTAR VARIABLES DISPONIBLES
+        # DETECTAR VARIABLES
         # ====================================================
-
-        variables_disponibles = []
 
         posibles = [
             'ldr_raw',
@@ -121,16 +156,41 @@ if uploaded_file is not None:
             'horas_luz_acum'
         ]
 
-        for var in posibles:
-            if var in df.columns:
-                variables_disponibles.append(var)
+        variables_disponibles = []
+
+        for col in df.columns:
+
+            nombre = str(col).strip()
+
+            if nombre in posibles:
+                variables_disponibles.append(nombre)
+
+        # ====================================================
+        # DEBUG
+        # ====================================================
+
+        st.sidebar.subheader("🔍 Debug")
+
+        st.sidebar.write("Columnas detectadas:")
+
+        st.sidebar.write(df.columns.tolist())
+
+        # ====================================================
+        # VALIDAR VARIABLES
+        # ====================================================
 
         if len(variables_disponibles) == 0:
-            st.error("No se encontraron variables compatibles.")
+
+            st.error("❌ No se encontraron variables compatibles.")
+
+            st.write("Columnas encontradas en el CSV:")
+
+            st.write(df.columns.tolist())
+
             st.stop()
 
         # ====================================================
-        # SELECTOR DE VARIABLE
+        # SELECTOR VARIABLE
         # ====================================================
 
         st.sidebar.header("⚙️ Configuración")
@@ -141,7 +201,7 @@ if uploaded_file is not None:
         )
 
         # ====================================================
-        # INFORMACIÓN VARIABLE
+        # NOMBRES
         # ====================================================
 
         nombres = {
@@ -157,6 +217,23 @@ if uploaded_file is not None:
             'es_luz_solar': '',
             'horas_luz_acum': 'h'
         }
+
+        # ====================================================
+        # CONVERTIR A NUMÉRICO
+        # ====================================================
+
+        for var in variables_disponibles:
+
+            df[var] = pd.to_numeric(
+                df[var],
+                errors='coerce'
+            )
+
+        # ====================================================
+        # ELIMINAR NAN
+        # ====================================================
+
+        df = df.dropna(subset=[variable])
 
         # ====================================================
         # TABS
@@ -176,7 +253,9 @@ if uploaded_file is not None:
 
         with tab1:
 
-            st.subheader(f"Visualización — {nombres[variable]}")
+            st.subheader(
+                f"Visualización — {nombres[variable]}"
+            )
 
             chart_type = st.selectbox(
                 "Seleccione tipo de gráfico",
@@ -184,26 +263,50 @@ if uploaded_file is not None:
             )
 
             if chart_type == "Línea":
+
                 st.line_chart(df[variable])
 
             elif chart_type == "Área":
+
                 st.area_chart(df[variable])
 
             else:
+
                 st.bar_chart(df[variable])
 
-            # Mostrar promedio
+            # =================================================
+            # MÉTRICAS
+            # =================================================
 
-            promedio = df[variable].mean()
+            col1, col2, col3 = st.columns(3)
 
-            st.metric(
-                "Promedio",
-                f"{promedio:.2f} {unidades[variable]}"
-            )
+            with col1:
 
-            # Mostrar datos crudos
+                st.metric(
+                    "Promedio",
+                    f"{df[variable].mean():.2f} {unidades[variable]}"
+                )
+
+            with col2:
+
+                st.metric(
+                    "Máximo",
+                    f"{df[variable].max():.2f} {unidades[variable]}"
+                )
+
+            with col3:
+
+                st.metric(
+                    "Mínimo",
+                    f"{df[variable].min():.2f} {unidades[variable]}"
+                )
+
+            # =================================================
+            # DATOS CRUDOS
+            # =================================================
 
             if st.checkbox("Mostrar datos crudos"):
+
                 st.dataframe(df)
 
         # ====================================================
@@ -212,41 +315,17 @@ if uploaded_file is not None:
 
         with tab2:
 
-            st.subheader("📊 Estadísticas Descriptivas")
+            st.subheader(
+                "📊 Estadísticas Descriptivas"
+            )
 
-            stats_df = df[variable].describe()
+            stats = df[variable].describe()
 
-            col1, col2 = st.columns(2)
+            st.dataframe(stats)
 
-            with col1:
-
-                st.dataframe(stats_df)
-
-            with col2:
-
-                st.metric(
-                    "Promedio",
-                    f"{stats_df['mean']:.2f} {unidades[variable]}"
-                )
-
-                st.metric(
-                    "Máximo",
-                    f"{stats_df['max']:.2f} {unidades[variable]}"
-                )
-
-                st.metric(
-                    "Mínimo",
-                    f"{stats_df['min']:.2f} {unidades[variable]}"
-                )
-
-                st.metric(
-                    "Desviación",
-                    f"{stats_df['std']:.2f}"
-                )
-
-            # Histograma
-
-            st.subheader("Distribución de Datos")
+            st.subheader(
+                "Distribución de Datos"
+            )
 
             hist_values = np.histogram(
                 df[variable],
@@ -261,7 +340,7 @@ if uploaded_file is not None:
 
         with tab3:
 
-            st.subheader("🔍 Filtrado de Datos")
+            st.subheader("🔍 Filtrado")
 
             min_value = float(df[variable].min())
             max_value = float(df[variable].max())
@@ -287,12 +366,10 @@ if uploaded_file is not None:
 
             st.dataframe(filtrado)
 
-            # Descargar CSV
-
             csv = filtrado.to_csv().encode('utf-8')
 
             st.download_button(
-                label="⬇️ Descargar CSV filtrado",
+                label="⬇️ Descargar CSV",
                 data=csv,
                 file_name='datos_filtrados.csv',
                 mime='text/csv'
@@ -304,7 +381,9 @@ if uploaded_file is not None:
 
         with tab4:
 
-            st.subheader("⚠️ Detección de Anomalías")
+            st.subheader(
+                "⚠️ Detección de anomalías"
+            )
 
             serie = df[variable]
 
@@ -351,7 +430,9 @@ if uploaded_file is not None:
 
         with tab5:
 
-            st.subheader("🗺️ Información del Sitio")
+            st.subheader(
+                "🗺️ Información del Sitio"
+            )
 
             col1, col2 = st.columns(2)
 
@@ -363,20 +444,20 @@ if uploaded_file is not None:
                 st.write("- Medellín, Colombia")
                 st.write("- Latitud: 6.2006")
                 st.write("- Longitud: -75.5783")
-                st.write("- Altitud: ~1495 msnm")
+                st.write("- Altitud: 1495 msnm")
 
             with col2:
 
                 st.write("### ⚙️ Sensor")
 
-                st.write("- Microcontrolador: ESP32")
-                st.write("- Sensor: LDR")
-                st.write("- Variable principal: Luminosidad")
-                st.write("- Plataforma: InfluxDB Cloud")
-                st.write("- Visualización: Streamlit")
+                st.write("- ESP32")
+                st.write("- Sensor LDR")
+                st.write("- InfluxDB Cloud")
+                st.write("- Streamlit")
+                st.write("- Monitoreo solar")
 
         # ====================================================
-        # PANEL RESUMEN
+        # SIDEBAR RESUMEN
         # ====================================================
 
         st.sidebar.markdown("---")
@@ -401,21 +482,21 @@ if uploaded_file is not None:
     except Exception as e:
 
         st.error(
-            f'Error al procesar archivo: {str(e)}'
+            f"❌ Error al procesar archivo: {str(e)}"
         )
 
         st.info(
-            'Verifique que el CSV contenga columnas válidas.'
+            "Verifique el formato del CSV exportado desde InfluxDB."
         )
 
 # ============================================================
-# SI NO HAY ARCHIVO
+# SIN ARCHIVO
 # ============================================================
 
 else:
 
     st.warning(
-        '⚠️ Cargue un archivo CSV para comenzar.'
+        "⚠️ Cargue un archivo CSV para comenzar."
     )
 
 # ============================================================
