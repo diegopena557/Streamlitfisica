@@ -71,7 +71,7 @@ st.subheader("📍 Ubicación del Sensor")
 st.map(eafit_location, zoom=15)
 
 # ============================================================
-# SUBIR ARCHIVO
+# CARGAR ARCHIVO
 # ============================================================
 
 uploaded_file = st.file_uploader(
@@ -88,54 +88,16 @@ if uploaded_file is not None:
     try:
 
         # ====================================================
-        # LEER CSV COMPLETO
+        # LEER CSV EXPORTADO DESDE INFLUXDB
         # ====================================================
-
-        raw_df = pd.read_csv(
-            uploaded_file,
-            header=None
-        )
-
-        # ====================================================
-        # BUSCAR FILA DEL HEADER
-        # ====================================================
-
-        header_row = None
-
-        for i in range(len(raw_df)):
-
-            fila = raw_df.iloc[i].astype(str).tolist()
-
-            if '_field' in fila or '_value' in fila:
-
-                header_row = i
-                break
-
-        # ====================================================
-        # VALIDAR HEADER
-        # ====================================================
-
-        if header_row is None:
-
-            st.error(
-                "❌ No se pudo detectar el encabezado del CSV."
-            )
-
-            st.stop()
-
-        # ====================================================
-        # LEER CSV CORRECTAMENTE
-        # ====================================================
-
-        uploaded_file.seek(0)
 
         df = pd.read_csv(
             uploaded_file,
-            skiprows=header_row
+            skiprows=3
         )
 
         # ====================================================
-        # LIMPIAR COLUMNAS
+        # LIMPIAR NOMBRES DE COLUMNAS
         # ====================================================
 
         df.columns = [
@@ -144,54 +106,24 @@ if uploaded_file is not None:
         ]
 
         # ====================================================
-        # DEBUG
+        # ELIMINAR COLUMNA VACÍA
         # ====================================================
 
-        st.sidebar.subheader("🔍 Debug")
+        if 'Unnamed: 0' in df.columns:
 
-        st.sidebar.write(
-            f"Header detectado en fila: {header_row}"
-        )
-
-        st.sidebar.write("Columnas originales:")
-
-        st.sidebar.write(
-            df.columns.tolist()
-        )
+            df = df.drop(
+                columns=['Unnamed: 0']
+            )
 
         # ====================================================
-        # RENOMBRAR TIME
+        # RENOMBRAR COLUMNA TIME
         # ====================================================
 
-        if '_time' in df.columns:
-
-            df = df.rename(columns={
-                '_time': 'Time'
-            })
-
-        elif 'time' in df.columns:
+        if 'time' in df.columns:
 
             df = df.rename(columns={
                 'time': 'Time'
             })
-
-        # ====================================================
-        # ELIMINAR METADATA
-        # ====================================================
-
-        columnas_eliminar = [
-            'result',
-            'table',
-            '_start',
-            '_stop',
-            '_measurement'
-        ]
-
-        for col in columnas_eliminar:
-
-            if col in df.columns:
-
-                df = df.drop(columns=col)
 
         # ====================================================
         # CONVERTIR TIEMPO
@@ -206,34 +138,14 @@ if uploaded_file is not None:
             df = df.set_index('Time')
 
         # ====================================================
-        # TRANSFORMAR FORMATO FLUX
+        # MOSTRAR DEBUG
         # ====================================================
 
-        if '_field' in df.columns and '_value' in df.columns:
+        st.sidebar.subheader("🔍 Debug")
 
-            df = df.pivot_table(
-                index=df.index,
-                columns='_field',
-                values='_value',
-                aggfunc='first'
-            )
-
-            df.columns.name = None
-
-        # ====================================================
-        # LIMPIAR COLUMNAS NUEVAMENTE
-        # ====================================================
-
-        df.columns = [
-            str(c).strip()
-            for c in df.columns
-        ]
-
-        # ====================================================
-        # DEBUG FINAL
-        # ====================================================
-
-        st.sidebar.write("Columnas transformadas:")
+        st.sidebar.write(
+            "Columnas detectadas:"
+        )
 
         st.sidebar.write(
             df.columns.tolist()
@@ -250,13 +162,10 @@ if uploaded_file is not None:
             'horas_luz_acum'
         ]
 
-        variables_disponibles = []
-
-        for col in df.columns:
-
-            if col in posibles:
-
-                variables_disponibles.append(col)
+        variables_disponibles = [
+            col for col in df.columns
+            if col in posibles
+        ]
 
         # ====================================================
         # VALIDAR VARIABLES
@@ -272,12 +181,14 @@ if uploaded_file is not None:
                 "Columnas encontradas:"
             )
 
-            st.write(df.columns.tolist())
+            st.write(
+                df.columns.tolist()
+            )
 
             st.stop()
 
         # ====================================================
-        # CONVERTIR NUMÉRICOS
+        # CONVERTIR VARIABLES A NUMÉRICO
         # ====================================================
 
         for var in variables_disponibles:
@@ -299,7 +210,7 @@ if uploaded_file is not None:
         )
 
         # ====================================================
-        # NOMBRES
+        # NOMBRES Y UNIDADES
         # ====================================================
 
         nombres = {
@@ -317,7 +228,7 @@ if uploaded_file is not None:
         }
 
         # ====================================================
-        # LIMPIAR NaN
+        # LIMPIAR NAN
         # ====================================================
 
         df = df.dropna(
@@ -424,6 +335,10 @@ if uploaded_file is not None:
 
             st.dataframe(stats)
 
+            # ================================================
+            # HISTOGRAMA
+            # ================================================
+
             st.subheader(
                 "Distribución"
             )
@@ -475,6 +390,10 @@ if uploaded_file is not None:
             st.dataframe(
                 filtrado
             )
+
+            # ================================================
+            # DESCARGAR CSV
+            # ================================================
 
             csv = filtrado.to_csv().encode(
                 'utf-8'
