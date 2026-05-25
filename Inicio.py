@@ -88,38 +88,95 @@ if uploaded_file is not None:
     try:
 
         # ====================================================
-        # LEER CSV DE INFLUXDB
+        # LEER CSV COMPLETO
         # ====================================================
+
+        raw_df = pd.read_csv(
+            uploaded_file,
+            header=None
+        )
+
+        # ====================================================
+        # BUSCAR FILA DEL HEADER
+        # ====================================================
+
+        header_row = None
+
+        for i in range(len(raw_df)):
+
+            fila = raw_df.iloc[i].astype(str).tolist()
+
+            if '_field' in fila or '_value' in fila:
+
+                header_row = i
+                break
+
+        # ====================================================
+        # VALIDAR HEADER
+        # ====================================================
+
+        if header_row is None:
+
+            st.error(
+                "❌ No se pudo detectar el encabezado del CSV."
+            )
+
+            st.stop()
+
+        # ====================================================
+        # LEER CSV CORRECTAMENTE
+        # ====================================================
+
+        uploaded_file.seek(0)
 
         df = pd.read_csv(
             uploaded_file,
-            skiprows=2
+            skiprows=header_row
         )
 
         # ====================================================
         # LIMPIAR COLUMNAS
         # ====================================================
 
-        df.columns = [str(c).strip() for c in df.columns]
+        df.columns = [
+            str(c).strip()
+            for c in df.columns
+        ]
 
         # ====================================================
-        # ELIMINAR COLUMNAS VACÍAS
+        # DEBUG
         # ====================================================
 
-        df = df.dropna(axis=1, how='all')
+        st.sidebar.subheader("🔍 Debug")
+
+        st.sidebar.write(
+            f"Header detectado en fila: {header_row}"
+        )
+
+        st.sidebar.write("Columnas originales:")
+
+        st.sidebar.write(
+            df.columns.tolist()
+        )
 
         # ====================================================
-        # RENOMBRAR COLUMNA TIME
+        # RENOMBRAR TIME
         # ====================================================
 
         if '_time' in df.columns:
-            df = df.rename(columns={'_time': 'Time'})
+
+            df = df.rename(columns={
+                '_time': 'Time'
+            })
 
         elif 'time' in df.columns:
-            df = df.rename(columns={'time': 'Time'})
+
+            df = df.rename(columns={
+                'time': 'Time'
+            })
 
         # ====================================================
-        # ELIMINAR COLUMNAS METADATA
+        # ELIMINAR METADATA
         # ====================================================
 
         columnas_eliminar = [
@@ -133,6 +190,7 @@ if uploaded_file is not None:
         for col in columnas_eliminar:
 
             if col in df.columns:
+
                 df = df.drop(columns=col)
 
         # ====================================================
@@ -141,12 +199,48 @@ if uploaded_file is not None:
 
         if 'Time' in df.columns:
 
-            df['Time'] = pd.to_datetime(df['Time'])
+            df['Time'] = pd.to_datetime(
+                df['Time']
+            )
 
             df = df.set_index('Time')
 
         # ====================================================
-        # DETECTAR VARIABLES
+        # TRANSFORMAR FORMATO FLUX
+        # ====================================================
+
+        if '_field' in df.columns and '_value' in df.columns:
+
+            df = df.pivot_table(
+                index=df.index,
+                columns='_field',
+                values='_value',
+                aggfunc='first'
+            )
+
+            df.columns.name = None
+
+        # ====================================================
+        # LIMPIAR COLUMNAS NUEVAMENTE
+        # ====================================================
+
+        df.columns = [
+            str(c).strip()
+            for c in df.columns
+        ]
+
+        # ====================================================
+        # DEBUG FINAL
+        # ====================================================
+
+        st.sidebar.write("Columnas transformadas:")
+
+        st.sidebar.write(
+            df.columns.tolist()
+        )
+
+        # ====================================================
+        # VARIABLES ESPERADAS
         # ====================================================
 
         posibles = [
@@ -160,20 +254,9 @@ if uploaded_file is not None:
 
         for col in df.columns:
 
-            nombre = str(col).strip()
+            if col in posibles:
 
-            if nombre in posibles:
-                variables_disponibles.append(nombre)
-
-        # ====================================================
-        # DEBUG
-        # ====================================================
-
-        st.sidebar.subheader("🔍 Debug")
-
-        st.sidebar.write("Columnas detectadas:")
-
-        st.sidebar.write(df.columns.tolist())
+                variables_disponibles.append(col)
 
         # ====================================================
         # VALIDAR VARIABLES
@@ -181,16 +264,31 @@ if uploaded_file is not None:
 
         if len(variables_disponibles) == 0:
 
-            st.error("❌ No se encontraron variables compatibles.")
+            st.error(
+                "❌ No se encontraron variables compatibles."
+            )
 
-            st.write("Columnas encontradas en el CSV:")
+            st.write(
+                "Columnas encontradas:"
+            )
 
             st.write(df.columns.tolist())
 
             st.stop()
 
         # ====================================================
-        # SELECTOR VARIABLE
+        # CONVERTIR NUMÉRICOS
+        # ====================================================
+
+        for var in variables_disponibles:
+
+            df[var] = pd.to_numeric(
+                df[var],
+                errors='coerce'
+            )
+
+        # ====================================================
+        # SIDEBAR
         # ====================================================
 
         st.sidebar.header("⚙️ Configuración")
@@ -219,21 +317,12 @@ if uploaded_file is not None:
         }
 
         # ====================================================
-        # CONVERTIR A NUMÉRICO
+        # LIMPIAR NaN
         # ====================================================
 
-        for var in variables_disponibles:
-
-            df[var] = pd.to_numeric(
-                df[var],
-                errors='coerce'
-            )
-
-        # ====================================================
-        # ELIMINAR NAN
-        # ====================================================
-
-        df = df.dropna(subset=[variable])
+        df = df.dropna(
+            subset=[variable]
+        )
 
         # ====================================================
         # TABS
@@ -259,24 +348,34 @@ if uploaded_file is not None:
 
             chart_type = st.selectbox(
                 "Seleccione tipo de gráfico",
-                ["Línea", "Área", "Barra"]
+                [
+                    "Línea",
+                    "Área",
+                    "Barra"
+                ]
             )
 
             if chart_type == "Línea":
 
-                st.line_chart(df[variable])
+                st.line_chart(
+                    df[variable]
+                )
 
             elif chart_type == "Área":
 
-                st.area_chart(df[variable])
+                st.area_chart(
+                    df[variable]
+                )
 
             else:
 
-                st.bar_chart(df[variable])
+                st.bar_chart(
+                    df[variable]
+                )
 
-            # =================================================
+            # ================================================
             # MÉTRICAS
-            # =================================================
+            # ================================================
 
             col1, col2, col3 = st.columns(3)
 
@@ -301,11 +400,13 @@ if uploaded_file is not None:
                     f"{df[variable].min():.2f} {unidades[variable]}"
                 )
 
-            # =================================================
+            # ================================================
             # DATOS CRUDOS
-            # =================================================
+            # ================================================
 
-            if st.checkbox("Mostrar datos crudos"):
+            if st.checkbox(
+                "Mostrar datos crudos"
+            ):
 
                 st.dataframe(df)
 
@@ -324,7 +425,7 @@ if uploaded_file is not None:
             st.dataframe(stats)
 
             st.subheader(
-                "Distribución de Datos"
+                "Distribución"
             )
 
             hist_values = np.histogram(
@@ -340,10 +441,17 @@ if uploaded_file is not None:
 
         with tab3:
 
-            st.subheader("🔍 Filtrado")
+            st.subheader(
+                "🔍 Filtrado de Datos"
+            )
 
-            min_value = float(df[variable].min())
-            max_value = float(df[variable].max())
+            min_value = float(
+                df[variable].min()
+            )
+
+            max_value = float(
+                df[variable].max()
+            )
 
             rango = st.slider(
                 "Seleccione rango",
@@ -364,9 +472,13 @@ if uploaded_file is not None:
                 f"Registros encontrados: {len(filtrado)}"
             )
 
-            st.dataframe(filtrado)
+            st.dataframe(
+                filtrado
+            )
 
-            csv = filtrado.to_csv().encode('utf-8')
+            csv = filtrado.to_csv().encode(
+                'utf-8'
+            )
 
             st.download_button(
                 label="⬇️ Descargar CSV",
@@ -382,7 +494,7 @@ if uploaded_file is not None:
         with tab4:
 
             st.subheader(
-                "⚠️ Detección de anomalías"
+                "⚠️ Detección de Anomalías"
             )
 
             serie = df[variable]
@@ -408,7 +520,9 @@ if uploaded_file is not None:
                 len(anomalias)
             )
 
-            st.line_chart(df[variable])
+            st.line_chart(
+                df[variable]
+            )
 
             if len(anomalias) > 0:
 
@@ -416,7 +530,9 @@ if uploaded_file is not None:
                     f"Se detectaron {len(anomalias)} anomalías."
                 )
 
-                st.dataframe(anomalias)
+                st.dataframe(
+                    anomalias
+                )
 
             else:
 
@@ -438,31 +554,65 @@ if uploaded_file is not None:
 
             with col1:
 
-                st.write("### 📍 Ubicación")
+                st.write(
+                    "### 📍 Ubicación"
+                )
 
-                st.write("**Universidad EAFIT**")
-                st.write("- Medellín, Colombia")
-                st.write("- Latitud: 6.2006")
-                st.write("- Longitud: -75.5783")
-                st.write("- Altitud: 1495 msnm")
+                st.write(
+                    "**Universidad EAFIT**"
+                )
+
+                st.write(
+                    "- Medellín, Colombia"
+                )
+
+                st.write(
+                    "- Latitud: 6.2006"
+                )
+
+                st.write(
+                    "- Longitud: -75.5783"
+                )
+
+                st.write(
+                    "- Altitud: 1495 msnm"
+                )
 
             with col2:
 
-                st.write("### ⚙️ Sensor")
+                st.write(
+                    "### ⚙️ Sensor"
+                )
 
-                st.write("- ESP32")
-                st.write("- Sensor LDR")
-                st.write("- InfluxDB Cloud")
-                st.write("- Streamlit")
-                st.write("- Monitoreo solar")
+                st.write(
+                    "- ESP32"
+                )
+
+                st.write(
+                    "- Sensor LDR"
+                )
+
+                st.write(
+                    "- InfluxDB Cloud"
+                )
+
+                st.write(
+                    "- Streamlit"
+                )
+
+                st.write(
+                    "- Monitoreo solar"
+                )
 
         # ====================================================
-        # SIDEBAR RESUMEN
+        # RESUMEN SIDEBAR
         # ====================================================
 
         st.sidebar.markdown("---")
 
-        st.sidebar.subheader("📌 Resumen")
+        st.sidebar.subheader(
+            "📌 Resumen"
+        )
 
         st.sidebar.metric(
             "Variable actual",
